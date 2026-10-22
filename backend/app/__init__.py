@@ -17,12 +17,20 @@ def create_app(test_config=None):
     app.config.from_mapping(
         SECRET_KEY=os.getenv("SECRET_KEY", "development-only-change-me"),
         JWT_SECRET_KEY=os.getenv("JWT_SECRET_KEY", "development-only-change-me-too"),
-        SQLALCHEMY_DATABASE_URI=os.getenv("DATABASE_URL", "postgresql+psycopg://signalloop_app:change-this-password@localhost:5432/signalloop"),
+        SQLALCHEMY_DATABASE_URI=os.getenv(
+            "DATABASE_URL",
+            "postgresql+psycopg://signalloop_app:change-this-password@localhost:5432/signalloop",
+        ),
         SQLALCHEMY_TRACK_MODIFICATIONS=False,
-        JWT_ACCESS_TOKEN_EXPIRES=timedelta(minutes=int(os.getenv("JWT_ACCESS_TOKEN_EXPIRES_MINUTES", "30"))),
+        JWT_ACCESS_TOKEN_EXPIRES=timedelta(
+            minutes=int(os.getenv("JWT_ACCESS_TOKEN_EXPIRES_MINUTES", "30"))
+        ),
         DEBUG=os.getenv("FLASK_DEBUG", "0") == "1",
         MAX_CONTENT_LENGTH=5 * 1024 * 1024,
+        UPLOAD_FOLDER=os.path.join(app.instance_path, "incident_uploads"),
+        MAX_PHOTO_SIZE=4 * 1024 * 1024,
     )
+
     if test_config:
         app.config.update(test_config)
 

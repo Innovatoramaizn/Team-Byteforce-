@@ -1,6 +1,9 @@
+import os
 from datetime import datetime, timezone
+from uuid import uuid4
 
-from flask import Blueprint, jsonify, request
+
+from flask import Blueprint, current_app, jsonify, request, send_file
 from flask_jwt_extended import get_jwt, get_jwt_identity, jwt_required
 from sqlalchemy import select
 
@@ -75,6 +78,167 @@ def create_incident():
     write_audit(incident, "incident.created", {"status": "sub"})
     db.session.commit()
     return jsonify({"incident": incident.to_dict()}), 201
+
+
+@incidents_bp.post("/<int:incident_id>/photo")
+@jwt_required()
+def upload_incident_photo(incident_id):
+    user = current_user()
+
+    if not user or not user.is_active:
+        return jsonify({
+            "error": "account_unavailable",
+            "message": "Your account is unavailable."
+        }), 401
+
+    incident = db.session.get(Incident, incident_id)
+
+    # Return 404 for inaccessible incidents to avoid exposing their existence.
+    if not incident or (
+        user.role != "admin" and incident.reporter_id != user.id
+    ):
+        return jsonify({
+            "error": "not_found",
+            "message": "Incident not found."
+        }), 404
+
+    photo = request.files.get("photo")
+
+    if not photo or not photo.filename:
+        return jsonify({
+            "error": "photo_required",
+            "message": "Choose a photo to upload."
+        }), 400
+
+    # Read only enough bytes to verify that the content is actually a JPEG.
+    header = photo.stream.read(3)
+    photo.stream.seek(0)
+
+    if not header.startswith(b"\xff\xd8\xff"):
+        return jsonify({
+            "error": "invalid_photo",
+            "message": "Upload a valid JPEG image."
+        }), 400
+
+    max_size = current_app.config["MAX_PHOTO_SIZE"]
+    contents = photo.stream.read(max_size + 1)
+
+    if len(contents) > max_size:
+        return jsonify({
+            "error": "photo_too_large",
+            "message": "The photo must be no larger than 4 MB."
+        }), 413
+
+    # Use a server-generated filename, never a client-supplied path.
+    filename = f"{uuid4().hex}.jpg"
+    upload_dir = current_app.config["UPLOAD_FOLDER"]
+    os.makedirs(upload_dir, mode=0o700, exist_ok=True)
+    filepath = os.path.join(upload_dir, filename)
+
+    try:
+        with open(filepath, "xb") as stored_file:
+            stored_file.write(contents)
+
+        previous_filename = incident.photo_filename
+        incident.photo_filename = filename
+
+        write_audit(
+            incident,
+            "incident.photo_uploaded",
+            {"photo_attached": True}
+        )
+        db.session.commit()
+
+    except Exception:
+        db.session.rollback()
+
+        if os.path.exists(filepath):
+            os.remove(filepath)
+
+        current_app.logger.exception(
+            "Failed to save photo for incident %s", incident_id
+        )
+        return jsonify({
+            "error": "photo_upload_failed",
+            "message": "The photo could not be saved. Please try again."
+        }), 500
+
+    # Remove the replaced file only after the database commit succeeds.
+    if previous_filename and previous_filename != filename:
+        old_path = os.path.join(upload_dir, previous_filename)
+        try:
+            if os.path.isfile(old_path):
+                os.remove(old_path)
+        except OSError:
+            current_app.logger.warning(
+                "Could not remove replaced photo for incident %s",
+                incident_id
+            )
+
+    return jsonify({
+        "message": "Photo uploaded successfully.",
+        "incident_id": incident.id,
+        "photo_filename": filename,
+        "ph": True
+    }), 201
+
+
+@incidents_bp.get("/<int:incident_id>/photo")
+@jwt_required()
+def get_incident_photo(incident_id):
+    user = current_user()
+
+    if not user or not user.is_active:
+        return jsonify({
+            "error": "account_unavailable",
+            "message": "Your account is unavailable."
+        }), 401
+
+    incident = db.session.get(Incident, incident_id)
+
+    # Only the incident reporter or an admin may view its photo.
+    if not incident or (
+        user.role != "admin" and incident.reporter_id != user.id
+    ):
+        return jsonify({
+            "error": "not_found",
+            "message": "Incident not found."
+        }), 404
+
+    if not incident.photo_filename:
+        return jsonify({
+            "error": "photo_not_found",
+            "message": "This incident has no attached photo."
+        }), 404
+
+    upload_dir = os.path.realpath(current_app.config["UPLOAD_FOLDER"])
+    filepath = os.path.realpath(
+        os.path.join(upload_dir, incident.photo_filename)
+    )
+
+    # Ensure the resolved file remains inside the upload directory.
+    if os.path.commonpath([upload_dir, filepath]) != upload_dir:
+        return jsonify({
+            "error": "photo_not_found",
+            "message": "Photo not found."
+        }), 404
+
+    if not os.path.isfile(filepath):
+        return jsonify({
+            "error": "photo_not_found",
+            "message": "Photo not found."
+        }), 404
+
+    response = send_file(
+        filepath,
+        mimetype="image/jpeg",
+        as_attachment=False,
+        download_name="incident-photo.jpg",
+        conditional=True
+    )
+    response.headers["Cache-Control"] = "private, no-store"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    return response
 
 
 @incidents_bp.get("/<int:incident_id>")

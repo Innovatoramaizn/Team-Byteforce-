@@ -28,16 +28,30 @@ const cacheUser = (user) => {
 
 let onUnauthorized = () => {}; // replaced by app.js so the API client can trigger sign-out
 
+
 const request = async (path, options = {}) => {
-  const headers = { "Content-Type": "application/json", ...(options.headers || {}) };
+  const isFormData =
+    typeof FormData !== "undefined" && options.body instanceof FormData;
+
+  const headers = {
+    ...(isFormData ? {} : { "Content-Type": "application/json" }),
+    ...(options.headers || {}),
+  };
+
   const token = getToken();
   if (token) headers.Authorization = "Bearer " + token;
+
   let response;
   try {
     response = await fetch(API_BASE + path, {
       method: options.method || "GET",
       headers,
-      body: options.body !== undefined ? JSON.stringify(options.body) : undefined,
+      body:
+        options.body !== undefined
+          ? isFormData
+            ? options.body
+            : JSON.stringify(options.body)
+          : undefined,
     });
   } catch (e) {
     throw {
@@ -46,14 +60,17 @@ const request = async (path, options = {}) => {
       message: "Can't reach the SignalLoop server. Start the backend and try again.",
     };
   }
+
   let data = null;
   try {
     data = await response.json();
   } catch (e) {}
+
   if (response.status === 401 && token) {
     clearSession();
     onUnauthorized();
   }
+
   if (!response.ok) {
     throw {
       status: response.status,
@@ -67,8 +84,10 @@ const request = async (path, options = {}) => {
             : "Something went wrong. Try again."),
     };
   }
+
   return data;
 };
+
 
 const api = {
   // --- session ---
@@ -105,7 +124,60 @@ const api = {
   // --- incidents ---
   listIncidents: () => request("/incidents").then((d) => d.items || []),
   getIncident: (id) => request("/incidents/" + id),
+  fetchIncidentPhoto: async (id) => {
+    const token = getToken();
+
+    if (!token) {
+      throw {
+        status: 401,
+        error: "unauthorized",
+        message: "Sign in to view this photo.",
+      };
+    }
+
+    const response = await fetch(
+      API_BASE + "/incidents/" + encodeURIComponent(id) + "/photo",
+      {
+        method: "GET",
+        headers: {
+          Authorization: "Bearer " + token,
+        },
+        cache: "no-store",
+      },
+    );
+
+    if (response.status === 401) {
+      clearSession();
+      onUnauthorized();
+      throw {
+        status: 401,
+        error: "unauthorized",
+        message: "Sign in again to view this photo.",
+      };
+    }
+
+    if (!response.ok) {
+      throw {
+        status: response.status,
+        error: "photo_fetch_failed",
+        message:
+          response.status === 404
+            ? "Photo not found or you do not have permission to view it."
+            : "Unable to load the attached photo.",
+      };
+    }
+
+    return response.blob();
+  },
   createIncident: (body) => request("/incidents", { method: "POST", body }).then((d) => d.incident),
+  uploadIncidentPhoto: (id, file) => {
+    const formData = new FormData();
+    formData.append("photo", file);
+    return request("/incidents/" + id + "/photo", {
+      method: "POST",
+      body: formData,
+    });
+  },
   updateIncident: (id, body) =>
     request("/incidents/" + id, { method: "PATCH", body }).then((d) => d.incident),
   reviewDuplicate: (id, body) =>

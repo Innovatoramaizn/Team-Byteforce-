@@ -52,6 +52,35 @@ const DEPARTMENTS = [
 ];
 let incidents = [];
 let lastSync = Date.now();
+const incidentPhotoUrls = new Map();
+const incidentPhotoLoads = new Map();
+
+function releaseIncidentPhoto(id) {
+  const url = incidentPhotoUrls.get(String(id));
+  if (url) {
+    URL.revokeObjectURL(url);
+    incidentPhotoUrls.delete(String(id));
+  }
+  incidentPhotoLoads.delete(String(id));
+}
+
+async function loadIncidentPhoto(id) {
+  const key = String(id);
+
+  if (incidentPhotoUrls.has(key)) return incidentPhotoUrls.get(key);
+  if (incidentPhotoLoads.has(key)) return incidentPhotoLoads.get(key);
+
+  const load = api.fetchIncidentPhoto(id)
+    .then((blob) => {
+      const url = URL.createObjectURL(blob);
+      incidentPhotoUrls.set(key, url);
+      return url;
+    })
+    .finally(() => incidentPhotoLoads.delete(key));
+
+  incidentPhotoLoads.set(key, load);
+  return load;
+}
 let state = {
   user: null,
   booting: true,
@@ -345,7 +374,7 @@ ${
         : ""
     }
 <h2>Add a photo (optional)</h2>
-<label style="all:unset;display:block"><span class="card" style="display:block;cursor:pointer;color:var(--tlT);font-weight:600">${d.img ? photoBlock(d.img) : "＋ Add photo or take a picture"}</span><input type="file" id="ph" accept="image/*" hidden></label><p class="s x" style="margin-top:6px">Photo previews stay on this device for now; upload isn’t available yet.</p>
+<label style="all:unset;display:block"><span class="card" style="display:block;cursor:pointer;color:var(--tlT);font-weight:600">${d.img ? photoBlock(d.img) : "＋ Add photo or take a picture"}</span><input type="file" id="ph" accept="image/*" hidden></label><p class="s x" style="margin-top:6px">Your photo will be attached to your report when you submit it.</p>
 <button class="btn pri" data-act="next">Continue →</button><p class="s x" style="text-align:center">Your details are only shared with the campus team handling this report.</p>
 ${studentNav("rep")}</div>
 `;
@@ -444,7 +473,7 @@ ${
 <div class="card row" style="cursor:default"><span class="ic tl" aria-hidden="true">⌖</span><div><b>${escapeHtml(i.l)}</b><div class="s">${escapeHtml(i.d)}</div>
 </div>
 </div>
-${photoBlock(i.img || undefined)}${
+${i.ph ? `<div id="incident-photo-${i.id}" class="card"><p class="s">Loading attached photo…</p></div>` : ""}${
       i.due ? `<div class="card row" style="cursor:default"><span class="ic wn" aria-hidden="true">◷</span><div><b>Target date</b><div class="s x">${formatDue(i.due)}${i.dept ? " · " + escapeHtml(i.dept) : ""}</div>
 </div>
 </div>
@@ -1160,7 +1189,37 @@ function render() {
   if (r == "a" && p == "dup" && isAdmin()) loadDecisions();
   const fn = document.getElementById("fn");
   if (fn) fn.textContent = `Showing ${filteredQueue().length} of ${incidents.length} reports`;
+  if (r === "s" && p === "inc" && a) {
+    const incident = findIncident(a);
+
+    if (incident && incident.ph) {
+      const container = document.getElementById(`incident-photo-${incident.id}`);
+
+      if (container && !container.dataset.loading) {
+        container.dataset.loading = "true";
+
+        loadIncidentPhoto(incident.id)
+          .then((url) => {
+            const current = document.getElementById(`incident-photo-${incident.id}`);
+            if (!current) return;
+
+            const img = document.createElement("img");
+            img.className = "thumb";
+            img.alt = "Attached photo";
+            img.src = url;
+
+            current.replaceChildren(img);
+          })
+          .catch(() => {
+            const current = document.getElementById(`incident-photo-${incident.id}`);
+            if (current) current.textContent = "The attached photo could not be loaded.";
+          });
+      }
+    }
+  }
 }
+
+
 addEventListener("hashchange", render);
 const maybeSync = () => {
   const active = document.activeElement;
@@ -1358,42 +1417,67 @@ const actions = {
     saveDraft();
     toast("Draft saved on this device. It is not submitted yet.");
   },
-  submit: () => {
+  submit: async () => {
     state.d.ac = fieldValue("ac");
+
+    if (state.busy) return;
+
     state.busy = 1;
     render.skipFocus = 1;
     render();
-    const a = suggestFromText(state.d.d);
-    api
-      .createIncident({
-        t: a.sum.slice(0, 40) || "New report",
-        c: state.d.ac || state.d.c,
-        l: state.d.l,
-        p: a.p,
-        d: state.d.d,
-      })
-      .then((i) => {
-        state.last = i.id;
-        state.d = {
-          c: "",
-          d: "",
-          l: "",
-          ph: "",
-          diff: 0,
-        };
+
+    try {
+      let incidentId = state.d.pendingIncidentId;
+
+      // Reuse an existing incident when retrying a failed photo upload.
+      if (!incidentId) {
+        const a = suggestFromText(state.d.d);
+        const incident = await api.createIncident({
+          t: a.sum.slice(0, 40) || "New report",
+          c: state.d.ac || state.d.c,
+          l: state.d.l,
+          p: a.p,
+          d: state.d.d,
+        });
+
+        incidentId = incident.id;
+        state.last = incidentId;
+        state.d.pendingIncidentId = incidentId;
         saveDraft();
-        state.busy = 0;
-        return refreshIncidents();
-      })
-      .then(() => {
-        goTo("#/s/conf");
-      })
-      .catch((err) => {
-        state.busy = 0;
-        toast(err.message);
-        render.skipFocus = 1;
-        render();
-      });
+      }
+
+      if (state.d.img) {
+        const response = await fetch(state.d.img);
+        const blob = await response.blob();
+        const file = new File([blob], "incident-photo.jpg", {
+          type: "image/jpeg",
+        });
+
+        await api.uploadIncidentPhoto(incidentId, file);
+      }
+
+      state.last = incidentId;
+      state.d = {
+        c: "",
+        d: "",
+        l: "",
+        ph: "",
+        img: "",
+        diff: 0,
+      };
+      saveDraft();
+
+      await refreshIncidents();
+      goTo("#/s/conf");
+    } catch (err) {
+      toast(err.message || "Submission failed. Please try again.");
+      render.skipFocus = 1;
+      render();
+    } finally {
+      state.busy = 0;
+      render.skipFocus = 1;
+      render();
+    }
   },
   soon: (e) => toast(e.dataset.v + " isn’t available yet."),
   authmode: () => {
