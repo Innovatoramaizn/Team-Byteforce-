@@ -1,0 +1,37 @@
+# Render Blueprint: the SignalLoop API + its PostgreSQL database.
+#
+# In Render: New -> Blueprint -> pick this repo -> Render reads this file and
+# creates both resources. Afterwards, paste the service URL (no /api suffix)
+# into vercel.json's rewrite destination and redeploy the site.
+services:
+  - type: web
+    name: signalloop-api
+    runtime: python
+    plan: free
+    region: oregon
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: flask --app run.py db upgrade && gunicorn --bind 0.0.0.0:$PORT --workers 2 --timeout 60 run:app
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: FLASK_APP
+        value: run.py
+      - key: FLASK_DEBUG
+        value: "0"
+      # Two different generated secrets; the app refuses to boot with placeholders.
+      - key: SECRET_KEY
+        generateValue: true
+      - key: JWT_SECRET_KEY
+        generateValue: true
+      - key: DATABASE_URL
+        fromDatabase:
+          name: signalloop-db
+          property: connectionString
+
+databases:
+  - name: signalloop-db
+    plan: free
+    region: oregon
+    databaseName: signalloop
+    user: signalloop_app

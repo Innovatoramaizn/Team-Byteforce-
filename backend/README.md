@@ -10,11 +10,15 @@ This is the first backend foundation for the existing plain HTML/CSS/JS frontend
 - Incident create, admin update/assignment/status change, admin audit trail, duplicate review records.
 - `/api/health` database connectivity check.
 - Initial PostgreSQL Alembic migration.
-- CORS allowlist for common local frontend ports.
+- CORS allowlist for common local frontend ports (configurable with `CORS_ORIGINS`; unnecessary when the site proxies `/api` through its Worker).
+- Production startup guard: outside development the app refuses to boot while `SECRET_KEY` / `JWT_SECRET_KEY` still hold placeholder values.
+- `flask create-admin --email ... --name ... --password ...` for non-interactive admin creation during a deploy.
+
+Deployment (gunicorn, migrations, health check, environment variables) is covered in [../DEPLOYMENT.md](../DEPLOYMENT.md).
 
 ## Not included yet
 
-Photo upload/storage, email verification, password reset, refresh tokens, rate limiting, AI categorisation, notifications, pagination, public campus-wide explore endpoint, and production deployment. Do not treat this initial scaffold as production-ready. JWT role claims are checked by routes, and an account's role should not be changed manually without invalidating outstanding tokens. For a real deployment, add token revocation/versioning and rate limiting.
+Rate limiting, refresh tokens, token revocation/versioning, email verification, password reset, AI categorisation, notifications, pagination, a public campus-wide explore endpoint, and per-user upload storage (photos currently land in `backend/instance/`, which needs a persistent disk when hosted). JWT role claims are checked by routes, and an account's role should not be changed manually without invalidating outstanding tokens. Add token revocation/versioning and rate limiting before treating a public deployment as hardened.
 
 ## Ubuntu 24.04 / WSL setup
 
@@ -57,7 +61,9 @@ Photo upload/storage, email verification, password reset, refresh tokens, rate l
 
    ```bash
    flask db upgrade
-   flask create-admin
+   flask create-admin                       # interactive
+   # or, non-interactively:
+   flask create-admin --email ops@example.edu --name "Campus Ops" --password 'a-long-password-12+'
    ```
 
 5. Start the API:

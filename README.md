@@ -3,10 +3,16 @@
 Campus issue reporting. Students report problems (broken lights, leaks, bins) and
 track them; campus admins triage, assign and resolve them.
 
-Plain HTML, CSS and JavaScript on the front end: no framework, no build step, no
-frontend dependencies. The `backend/` folder holds a Flask + PostgreSQL + JWT API
-that is now the source of truth for accounts and incidents (see
-[backend/README.md](backend/README.md)).
+Plain HTML, CSS and JavaScript on the front end: no framework, no frontend
+dependencies and no build step required to run it. The `backend/` folder holds a
+Flask + PostgreSQL + JWT API that is the source of truth for accounts and
+incidents (see [backend/README.md](backend/README.md)).
+
+**Deploying?** See [DEPLOYMENT.md](DEPLOYMENT.md): the static site goes to
+Freebuff Sites (`npm run build` + `site.manifest.json`, Worker `worker.js`
+proxying `/api/*`) or to Vercel (`vercel.json`, same `/api` proxy done with
+rewrites), and the Flask API goes to any Python + PostgreSQL host
+(`gunicorn run:app`, `flask db upgrade`, `flask create-admin`).
 
 ## Run it
 
@@ -43,12 +49,26 @@ Sign-in uses `POST /api/auth/login`; the JWT access token is kept in
 `sessionStorage` and expires after 30 minutes, after which the app returns you
 to the sign-in screen.
 
+### Which API the front end talks to
+
+`src/config.js` (loaded before `src/api.js`) can pin the API URL. Left empty,
+`src/api.js` picks it automatically:
+
+- page served from `localhost` / `127.0.0.1` → `http://127.0.0.1:5000/api`
+- anywhere else → `/api`, proxied by `worker.js` to the backend origin in the
+  site's `API_ORIGIN` variable (same-origin, so no CORS is involved)
+
 ## Layout
 
 | Path              | What it holds                                                                                |
 | ----------------- | --------------------------------------------------------------------------------------------- |
 | `index.html`      | Page shell                                                                                     |
 | `src/api.js`      | API client: auth, incidents, admin overview; token in `sessionStorage`, 401/403 handling       |
+| `src/config.js`   | Optional override for the API base URL                                                          |
+| `worker.js`       | Serves the static site and proxies `/api/*` to the backend                                      |
+| `site.manifest.json` | Deployment manifest for Freebuff Sites (Worker entrypoint + `dist/` assets)                  |
+| `vercel.json`    | Vercel config: builds `dist/`, rewrites `/api/*` to the backend                                |
+| `scripts/build.mjs`  | `npm run build` → copies the public files into `dist/`                                      |
 | `src/app.js`      | Student and admin screens, hash router (`#/s/home`, `#/a/queue`, ...), event handlers          |
 | `src/styles.css`  | Colour tokens (light and dark), components, responsive rules                                   |
 | `assets/logo.png` | Logo and favicon                                                                               |

@@ -1,6 +1,7 @@
 import os
 from datetime import timedelta
 
+import click
 from flask import Flask, jsonify
 from flask_cors import CORS
 from flask_jwt_extended import get_jwt, verify_jwt_in_request
@@ -12,15 +13,43 @@ from .extensions import db, jwt, migrate
 from .models import User
 
 
+def _require_production_secrets():
+    """Refuse to boot outside development with placeholder or missing secrets."""
+    if os.getenv("FLASK_DEBUG", "0") == "1":
+        return
+    placeholders = {
+        "SECRET_KEY": {"", "development-only-change-me", "replace-with-a-long-random-secret"},
+        "JWT_SECRET_KEY": {"", "development-only-change-me-too", "replace-with-a-different-long-random-secret"},
+    }
+    missing = [name for name, bad in placeholders.items() if os.getenv(name, "") in bad]
+    if missing:
+        raise RuntimeError(
+            "Refusing to start: set {} to random values (see backend/.env.example).".format(
+                ", ".join(missing)
+            )
+        )
+
+
+def _database_uri():
+    """Render and other hosts hand out postgres:// or postgresql:// URLs; SQLAlchemy
+    needs the psycopg 3 driver explicitly (postgresql+psycopg://)."""
+    uri = os.getenv(
+        "DATABASE_URL",
+        "postgresql+psycopg://signalloop_app:change-this-password@localhost:5432/signalloop",
+    )
+    if uri.startswith("postgres://") or uri.startswith("postgresql://"):
+        uri = "postgresql+psycopg://" + uri.split("://", 1)[1]
+    return uri
+
+
 def create_app(test_config=None):
+    if not test_config:
+        _require_production_secrets()
     app = Flask(__name__)
     app.config.from_mapping(
         SECRET_KEY=os.getenv("SECRET_KEY", "development-only-change-me"),
         JWT_SECRET_KEY=os.getenv("JWT_SECRET_KEY", "development-only-change-me-too"),
-        SQLALCHEMY_DATABASE_URI=os.getenv(
-            "DATABASE_URL",
-            "postgresql+psycopg://signalloop_app:change-this-password@localhost:5432/signalloop",
-        ),
+        SQLALCHEMY_DATABASE_URI=_database_uri(),
         SQLALCHEMY_TRACK_MODIFICATIONS=False,
         JWT_ACCESS_TOKEN_EXPIRES=timedelta(
             minutes=int(os.getenv("JWT_ACCESS_TOKEN_EXPIRES_MINUTES", "30"))
@@ -70,13 +99,19 @@ def create_app(test_config=None):
         return jsonify({"error": "internal_server_error", "message": "An unexpected server error occurred."}), 500
 
     @app.cli.command("create-admin")
-    def create_admin():
-        """Interactively create a campus admin; public registration cannot grant admin role."""
+    @click.option("--email", help="Admin email (omit for interactive prompt).")
+    @click.option("--name", help="Display name.")
+    @click.option("--password", help="Password of at least 12 characters (omit for hidden prompt).")
+    def create_admin(email=None, name=None, password=None):
+        """Create a campus admin; public registration cannot grant admin role.
+
+        Non-interactive for deployments: flask create-admin --email a@b.c --name "A B" --password '...'
+        """
         import getpass
         from sqlalchemy import select
-        email = input("Admin email: ").strip().lower()
-        display_name = input("Display name: ").strip()
-        password = getpass.getpass("Password (12+ characters): ")
+        email = (email or input("Admin email: ")).strip().lower()
+        display_name = (name or input("Display name: ")).strip()
+        password = password or getpass.getpass("Password (12+ characters): ")
         if "@" not in email or not display_name or len(password) < 12:
             raise SystemExit("Valid email, display name and a password of at least 12 characters are required.")
         if db.session.scalar(select(User).where(User.email == email)):

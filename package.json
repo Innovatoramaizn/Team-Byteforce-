@@ -3,6 +3,7 @@
   "private": true,
   "description": "SignalLoop: campus issue reporting front end, served over the Flask API in backend/","scripts": {
     "start": "npx --yes serve . -l 3000",
+    "build": "node scripts/build.mjs",
     "format": "npx --yes prettier --write ."
   }
 }

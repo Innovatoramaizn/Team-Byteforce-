@@ -1,0 +1,10 @@
+{
+  // Local-only config used to verify worker.js against a running Flask API:
+  //   npx --yes wrangler dev --config wrangler.test.jsonc --port 8787
+  // The deployment manifest for Freebuff Sites is site.manifest.json.
+  "name": "signalloop-local-test",
+  "main": "worker.js",
+  "compatibility_date": "2026-10-01",
+  "assets": { "directory": "./dist", "binding": "ASSETS" },
+  "vars": { "API_ORIGIN": "http://127.0.0.1:5000" }
+}

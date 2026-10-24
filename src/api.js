@@ -1,7 +1,22 @@
 // SignalLoop API client. All data now lives on the Flask backend (see backend/README.md).
 // The JWT access token is kept in sessionStorage for this session only; never store
 // passwords or tokens in source code or localStorage.
-const API_BASE = "http://127.0.0.1:5000/api";
+// Where the Flask API lives. Resolution order:
+//   1. window.SIGNALLOOP_CONFIG.apiBase (set in src/config.js, e.g. "https://api.example.com/api")
+//   2. "/api" when the site is hosted (worker.js proxies /api/* to the real backend, so
+//      the browser stays same-origin and no CORS setup is needed)
+//   3. "http://127.0.0.1:5000/api" during local development
+const resolveApiBase = () => {
+  const configured = window.SIGNALLOOP_CONFIG && window.SIGNALLOOP_CONFIG.apiBase;
+  if (configured) return String(configured).replace(/\/+$/, "");
+  const host = window.location.hostname;
+  const isLocal =
+    !host || host === "localhost" || host === "127.0.0.1" || host === "::1" || host === "[::1]";
+  return isLocal ? "http://127.0.0.1:5000/api" : "/api";
+};
+
+const API_BASE = resolveApiBase();
+const API_IS_LOCAL = API_BASE.indexOf("127.0.0.1") !== -1 || API_BASE.indexOf("localhost") !== -1;
 const TOKEN_KEY = "sl-token";
 const USER_KEY = "sl-user";
 
@@ -57,7 +72,9 @@ const request = async (path, options = {}) => {
     throw {
       status: 0,
       error: "network_error",
-      message: "Can't reach the SignalLoop server. Start the backend and try again.",
+      message: API_IS_LOCAL
+        ? "Can't reach the SignalLoop server. Start the backend on port 5000 and try again."
+        : "Can't reach the SignalLoop server. Check your connection and try again.",
     };
   }
 
