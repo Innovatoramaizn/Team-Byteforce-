@@ -1,0 +1,15 @@
+# Netlify: builds the static site into dist/ and points it at your deployed API.
+# Set API_BASE_URL in Site configuration > Environment variables (for example https://signalloop-api.onrender.com).
+[build]
+  command = "npm run build"
+  publish = "dist"
+
+[build.environment]
+  NODE_VERSION = "20"
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Content-Type-Options = "nosniff"
+    X-Frame-Options = "DENY"
+    Referrer-Policy = "strict-origin-when-cross-origin"

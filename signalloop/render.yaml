@@ -1,0 +1,46 @@
+# Render Blueprint: creates the API (Flask + gunicorn) and its PostgreSQL database.
+# The website itself is deployed separately (Netlify, see netlify.toml and README.md).
+#
+# On first setup Render asks for the three values marked "sync: false":
+#   CORS_ORIGINS    the exact address of your website, e.g. https://your-site.netlify.app (no trailing slash)
+#   ADMIN_EMAIL     email for the first campus admin account
+#   ADMIN_PASSWORD  password for it, at least 12 characters (remove this variable after your first sign-in)
+databases:
+  - name: signalloop-db
+    plan: free # Free Postgres expires after 30 days; choose a paid plan before then to keep your data.
+    databaseName: signalloop
+    user: signalloop
+
+services:
+  - type: web
+    name: signalloop-api
+    runtime: python
+    plan: free # Free services sleep after 15 minutes idle; the next request takes about a minute.
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    # Apply database migrations, create the first admin if configured, then serve with gunicorn.
+    startCommand: flask --app run.py db upgrade && flask --app run.py bootstrap-admin && gunicorn run:app --workers 2 --timeout 60
+    healthCheckPath: /api/health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.13.5
+      - key: APP_ENV
+        value: production
+      - key: FLASK_DEBUG
+        value: "0"
+      - key: DATABASE_URL
+        fromDatabase:
+          name: signalloop-db
+          property: connectionString
+      - key: SECRET_KEY
+        generateValue: true
+      - key: JWT_SECRET_KEY
+        generateValue: true
+      - key: CORS_ORIGINS
+        sync: false
+      - key: ADMIN_EMAIL
+        sync: false
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: ADMIN_NAME
+        value: Campus Admin
